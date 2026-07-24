@@ -12,25 +12,40 @@ https://github.com/kubernetes/client-go/blob/master/tools/clientcmd/api/types.go
 namespace kubernetes
 {
 
+    template <typename T>
+    struct class_from_member_ptr;
+
+    template <typename M, typename C>
+    struct class_from_member_ptr<M C::*>
+    {
+        using type = C;
+    };
+
     template <auto MemPtr>
     constexpr auto omit_false_member()
     {
+        // Automatically infer 'Class' from 'MemPtr'
+        using Class = typename class_from_member_ptr<decltype(MemPtr)>::type;
+
         return glz::custom<
-            // Reader: JSON -> C++
-            [](auto &obj, bool val)
+            [](Class &obj, bool val) -> void
             {
                 obj.*MemPtr = val;
             },
-            // Writer: C++ -> JSON (omits if false)
-            [](auto &obj, auto &&...args) noexcept
+            [](const Class &obj) -> std::optional<bool>
             {
                 if (obj.*MemPtr)
                 {
-                    glz::write<[] {}>(true, args...);
+                    return true;
                 }
+                return std::nullopt;
             }>;
     }
 
+    /*
+    TODO
+    Ai suggests to use std::string_view instead of string, maybe thats optimization worth exploring
+    */
     struct Cluster
     {
         // LocationOfOrigin string `json:"-" -> if i will need this i will add this
@@ -111,8 +126,8 @@ namespace kubernetes
     {
         std::string location_of_origin{}; // json:"-" (excluded)
         std::string cluster{};
-        std::string auth_info{};                                                  // json:"user"
-        std::optional<std::string> namespace_{};                                  // json:"namespace,omitempty"
+        std::string auth_info{};                                                   // json:"user"
+        std::optional<std::string> namespace_{};                                   // json:"namespace,omitempty"
         std::optional<std::unordered_map<std::string, glz::generic>> extensions{}; // json:"extensions,omitempty"
     };
 
@@ -132,7 +147,9 @@ namespace kubernetes
 template <>
 struct glz::meta<kubernetes::Config>
 {
+
     using T = kubernetes::Config;
+
     static constexpr auto value = glz::object(
         "kind", &T::kind,
         "apiVersion", &T::api_version,
@@ -210,5 +227,5 @@ struct glz::meta<kubernetes::Cluster>
         "certificate-authority", &T::certificate_authority,
         "certificate-authority-data", &T::certificate_authority,
         "proxy-url", &T::proxy_url,
-        "disable-compression", &T::disable_compression);
+        "disable-compression", kubernetes::omit_false_member<&T::disable_compression>());
 };
